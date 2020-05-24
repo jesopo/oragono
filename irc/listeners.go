@@ -160,7 +160,7 @@ func (wl *WSListener) handle(w http.ResponseWriter, r *http.Request) {
 				return true
 			}
 			origin := strings.TrimSpace(r.Header.Get("Origin"))
-			wl.server.logger.Debug("listeners", "processing websocket connection from origin", origin)
+			wl.server.logger.Info("listeners", "processing websocket connection from origin", origin)
 			if len(origin) == 0 {
 				return false
 			}

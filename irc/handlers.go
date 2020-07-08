@@ -2803,16 +2803,14 @@ func whoHandler(server *Server, client *Client, msg ircmsg.IrcMessage, rb *Respo
 		if strings.Contains(sFields, ",") {
 			typeIndex := strings.Index(sFields, ",")
 			whoType = sFields[typeIndex+1:]
-			sFields = sFields[:typeIndex]
+			sFields = strings.ToLower(sFields[:typeIndex])
 		} else {
 			whoType = "0"
 		}
 	}
 	var fields WhoFields
 	for _, field := range sFields {
-		if val, ok := whoFieldMap[field]; ok {
-			fields |= val
-		}
+		fields.Set(field)
 	}
 
 	//TODO(dan): is this used and would I put this param in the Modern doc?

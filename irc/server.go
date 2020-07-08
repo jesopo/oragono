@@ -434,7 +434,8 @@ func (client *Client) getWhoisOf(target *Client, rb *ResponseBuffer) {
 
 const WhoFieldMinimum = int('a') // lowest rune value
 const WhoFieldMaximum = int('z')
-type WhoFields [WhoFieldMaximum-WhoFieldMinimum+1]bool
+
+type WhoFields [WhoFieldMaximum - WhoFieldMinimum + 1]bool
 
 func (fields *WhoFields) Set(field rune) bool {
 	index := int(field)
@@ -459,24 +460,24 @@ func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *Response
 
 	details := target.Details()
 
-	if (fields.Has('t')) {
+	if fields.Has('t') {
 		fType := whoType
 		if fType == "" {
 			fType = "0"
 		}
 		params = append(params, fType)
 	}
-	if (fields.Has('c')) {
+	if fields.Has('c') {
 		fChannel := "*"
 		if channel != nil {
 			fChannel = channel.name
 		}
 		params = append(params, fChannel)
 	}
-	if (fields.Has('u')) {
+	if fields.Has('u') {
 		params = append(params, details.username)
 	}
-	if (fields.Has('i')) {
+	if fields.Has('i') {
 		fIP := "255.255.255.255"
 		if client.HasMode(modes.Operator) || client == target {
 			// you can only see a target's IP if they're you or you're an oper
@@ -488,16 +489,16 @@ func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *Response
 		}
 		params = append(params, fIP)
 	}
-	if (fields.Has('h')) {
+	if fields.Has('h') {
 		params = append(params, details.hostname)
 	}
-	if (fields.Has('s')) {
+	if fields.Has('s') {
 		params = append(params, target.server.name)
 	}
-	if (fields.Has('n')) {
+	if fields.Has('n') {
 		params = append(params, details.nick)
 	}
-	if (fields.Has('f')) { // "flags" (away + oper state + channel status prefix + bot)
+	if fields.Has('f') { // "flags" (away + oper state + channel status prefix + bot)
 		flags := ""
 		if target.Away() {
 			flags += "G" // Gone
@@ -520,13 +521,13 @@ func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *Response
 		params = append(params, flags)
 
 	}
-	if (fields.Has('d')) { // server hops from us to target
+	if fields.Has('d') { // server hops from us to target
 		params = append(params, "0")
 	}
-	if (fields.Has('l')) {
+	if fields.Has('l') {
 		params = append(params, fmt.Sprintf("%d", target.IdleSeconds()))
 	}
-	if (fields.Has('a')) {
+	if fields.Has('a') {
 		fAccount := "0"
 		if target.accountName != "*" {
 			// WHOX uses "0" to mean "no account"
@@ -534,11 +535,11 @@ func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *Response
 		}
 		params = append(params, fAccount)
 	}
-	if (fields.Has('o')) { // target's channel power level
+	if fields.Has('o') { // target's channel power level
 		//TODO: implement this
 		params = append(params, "0")
 	}
-	if (fields.Has('r')) {
+	if fields.Has('r') {
 		params = append(params, details.realname)
 	}
 

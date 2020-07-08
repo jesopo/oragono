@@ -491,26 +491,26 @@ func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *Response
 		params = append(params, details.nick)
 	}
 	if fields.Has('f') { // "flags" (away + oper state + channel status prefix + bot)
-		flags := ""
+		var flags strings.Builder
 		if target.Away() {
-			flags += "G" // Gone
+			flags.WriteRune('G') // Gone
 		} else {
-			flags += "H" // Here
+			flags.WriteRune('H') // Here
 		}
 
 		if target.HasMode(modes.Operator) {
-			flags += "*"
+			flags.WriteRune('*')
 		}
 
 		if channel != nil {
-			flags += channel.ClientPrefixes(target, false)
+			flags.WriteString(channel.ClientPrefixes(target, false))
 		}
 
 		if target.HasMode(modes.Bot) {
-			flags += "B"
+			flags.WriteRune('B')
 		}
 
-		params = append(params, flags)
+		params = append(params, flags.String())
 
 	}
 	if fields.Has('d') { // server hops from us to target

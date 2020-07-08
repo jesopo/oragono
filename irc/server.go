@@ -435,7 +435,7 @@ func (client *Client) getWhoisOf(target *Client, rb *ResponseBuffer) {
 type WhoFields uint
 
 const (
-	FieldType WhoFields = iota << 0
+	FieldType WhoFields = 1<<iota
 	FieldChannel
 	FieldUsername
 	FieldIP

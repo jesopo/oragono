@@ -2775,7 +2775,7 @@ func webircHandler(server *Server, client *Client, msg ircmsg.IrcMessage, rb *Re
 	return true
 }
 
-// WHO [<mask> [o]]
+// WHO <mask> [<filteR>%<fields>,<type>]
 func whoHandler(server *Server, client *Client, msg ircmsg.IrcMessage, rb *ResponseBuffer) bool {
 	mask := msg.Params[0]
 	var err error

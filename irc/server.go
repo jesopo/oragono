@@ -434,9 +434,11 @@ func (client *Client) getWhoisOf(target *Client, rb *ResponseBuffer) {
 	}
 }
 
-// rplWhoReply returns the WHO reply between one user and another channel/user.
-// <channel> <user> <host> <server> <nick> ( "H" / "G" ) ["*"] [ ( "@" / "+" ) ]
-// :<hopcount> <real name>
+// rplWhoReply returns the WHO(X) reply between one user and another channel/user.
+// who format:
+// <channel> <user> <host> <server> <nick> <H|G>[*][~|&|@|%|+][B] :<hopcount> <real name>
+// whox format:
+// <type> <channel> <user> <ip> <host> <server> <nick> <H|G>[*][~|&|@|%|+][B] <hops> <idle> <account> <rank> :<real name>
 func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *ResponseBuffer, fields []byte, whoType string) {
 	params := []string{client.Nick()}
 

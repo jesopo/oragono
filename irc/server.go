@@ -521,9 +521,9 @@ func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *Response
 	}
 	if fields.Has('a') {
 		fAccount := "0"
-		if target.accountName != "*" {
+		if details.accountName != "*" {
 			// WHOX uses "0" to mean "no account"
-			fAccount = target.accountName
+			fAccount = details.accountName
 		}
 		params = append(params, fAccount)
 	}

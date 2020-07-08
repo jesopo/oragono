@@ -450,7 +450,6 @@ const (
 	FieldRealname
 )
 
-//tcuihsnfdlaor
 var whoFieldMap = map[rune]WhoFields{
 	't': FieldType,
 	'c': FieldChannel,
@@ -515,7 +514,7 @@ func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *Response
 	if (fields & FieldNickname) != 0 {
 		params = append(params, details.nick)
 	}
-	if (fields & FieldFlags) != 0 { // "flags" (away + oper state + channel status prefix)
+	if (fields & FieldFlags) != 0 { // "flags" (away + oper state + channel status prefix + bot)
 		flags := ""
 		if target.Away() {
 			flags += "G" // Gone
@@ -553,7 +552,7 @@ func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *Response
 		params = append(params, fAccount)
 	}
 	if (fields & FieldRank) != 0 { // target's channel power level
-		// TODO: implement this
+		//TODO: implement this
 		params = append(params, "0")
 	}
 	if (fields & FieldRealname) != 0 {

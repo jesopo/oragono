@@ -6,6 +6,7 @@
 package irc
 
 import (
+	"bytes"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -21,20 +22,22 @@ import (
 	"time"
 
 	"code.cloudfoundry.org/bytefmt"
+	"github.com/goshuirc/irc-go/ircfmt"
+	"gopkg.in/yaml.v2"
+
 	"github.com/oragono/oragono/irc/caps"
 	"github.com/oragono/oragono/irc/cloaks"
 	"github.com/oragono/oragono/irc/connection_limits"
 	"github.com/oragono/oragono/irc/custime"
 	"github.com/oragono/oragono/irc/email"
 	"github.com/oragono/oragono/irc/isupport"
+	"github.com/oragono/oragono/irc/jwt"
 	"github.com/oragono/oragono/irc/languages"
-	"github.com/oragono/oragono/irc/ldap"
 	"github.com/oragono/oragono/irc/logger"
 	"github.com/oragono/oragono/irc/modes"
 	"github.com/oragono/oragono/irc/mysql"
 	"github.com/oragono/oragono/irc/passwd"
 	"github.com/oragono/oragono/irc/utils"
-	"gopkg.in/yaml.v2"
 )
 
 // here's how this works: exported (capitalized) members of the config structs
@@ -256,8 +259,7 @@ type AccountConfig struct {
 		exemptedNets []net.IPNet
 	} `yaml:"require-sasl"`
 	DefaultUserModes    *string `yaml:"default-user-modes"`
-	defaultUserModes    modes.ModeChanges
-	LDAP                ldap.ServerConfig
+	defaultUserModes    modes.Modes
 	LoginThrottling     ThrottleConfig `yaml:"login-throttling"`
 	SkipServerPassword  bool           `yaml:"skip-server-password"`
 	LoginViaPassCommand bool           `yaml:"login-via-pass-command"`
@@ -278,6 +280,16 @@ type AccountConfig struct {
 	Multiclient MulticlientConfig
 	Bouncer     *MulticlientConfig // # handle old name for 'multiclient'
 	VHosts      VHostConfig
+	AuthScript  AuthScriptConfig `yaml:"auth-script"`
+}
+
+type AuthScriptConfig struct {
+	Enabled     bool
+	Command     string
+	Args        []string
+	Autocreate  bool
+	Timeout     time.Duration
+	KillTimeout time.Duration `yaml:"kill-timeout"`
 }
 
 // AccountRegistrationConfig controls account registration.
@@ -320,7 +332,6 @@ const (
 	// else be fixed up by a schema change)
 	NickEnforcementOptional NickEnforcementMethod = iota
 	NickEnforcementNone
-	NickEnforcementWithTimeout
 	NickEnforcementStrict
 )
 
@@ -330,8 +341,6 @@ func nickReservationToString(method NickEnforcementMethod) string {
 		return "default"
 	case NickEnforcementNone:
 		return "none"
-	case NickEnforcementWithTimeout:
-		return "timeout"
 	case NickEnforcementStrict:
 		return "strict"
 	default:
@@ -347,8 +356,6 @@ func nickReservationFromString(method string) (NickEnforcementMethod, error) {
 		return NickEnforcementOptional, nil
 	case "none":
 		return NickEnforcementNone, nil
-	case "timeout":
-		return NickEnforcementWithTimeout, nil
 	case "strict":
 		return NickEnforcementStrict, nil
 	default:
@@ -404,7 +411,8 @@ type OperConfig struct {
 	Vhost       string
 	WhoisLine   string `yaml:"whois-line"`
 	Password    string
-	Fingerprint string
+	Fingerprint *string // legacy name for certfp, #1050
+	Certfp      string
 	Auto        bool
 	Modes       string
 }
@@ -514,6 +522,7 @@ type Config struct {
 		supportedCaps *caps.Set
 		capValues     caps.Values
 		Casemapping   Casemapping
+		EnforceUtf8   bool   `yaml:"enforce-utf8"`
 		OutputPath    string `yaml:"output-path"`
 	}
 
@@ -524,6 +533,11 @@ type Config struct {
 		RequireOper    bool  `yaml:"require-oper"`
 		AddSuffix      *bool `yaml:"add-suffix"`
 		addSuffix      bool
+	}
+
+	Extjwt struct {
+		Default  jwt.JwtServiceConfig            `yaml:",inline"`
+		Services map[string]jwt.JwtServiceConfig `yaml:"services"`
 	}
 
 	Languages struct {
@@ -686,14 +700,14 @@ func (conf *Config) OperatorClasses() (map[string]*OperClass, error) {
 
 // Oper represents a single assembled operator's config.
 type Oper struct {
-	Name        string
-	Class       *OperClass
-	WhoisLine   string
-	Vhost       string
-	Pass        []byte
-	Fingerprint string
-	Auto        bool
-	Modes       []modes.ModeChange
+	Name      string
+	Class     *OperClass
+	WhoisLine string
+	Vhost     string
+	Pass      []byte
+	Certfp    string
+	Auto      bool
+	Modes     []modes.ModeChange
 }
 
 // Operators returns a map of operator configs from the given OperClass and config.
@@ -715,15 +729,19 @@ func (conf *Config) Operators(oc map[string]*OperClass) (map[string]*Oper, error
 				return nil, fmt.Errorf("Oper %s has an invalid password hash: %s", oper.Name, err.Error())
 			}
 		}
-		if opConf.Fingerprint != "" {
-			oper.Fingerprint, err = utils.NormalizeCertfp(opConf.Fingerprint)
+		certfp := opConf.Certfp
+		if certfp == "" && opConf.Fingerprint != nil {
+			certfp = *opConf.Fingerprint
+		}
+		if certfp != "" {
+			oper.Certfp, err = utils.NormalizeCertfp(certfp)
 			if err != nil {
 				return nil, fmt.Errorf("Oper %s has an invalid fingerprint: %s", oper.Name, err.Error())
 			}
 		}
 		oper.Auto = opConf.Auto
 
-		if oper.Pass == nil && oper.Fingerprint == "" {
+		if oper.Pass == nil && oper.Certfp == "" {
 			return nil, fmt.Errorf("Oper %s has neither a password nor a fingerprint", name)
 		}
 
@@ -797,6 +815,29 @@ func (conf *Config) prepareListeners() (err error) {
 		lconf.WebSocket = block.WebSocket
 		conf.Server.trueListeners[addr] = lconf
 	}
+	return nil
+}
+
+func (config *Config) processExtjwt() (err error) {
+	// first process the default service, which may be disabled
+	err = config.Extjwt.Default.Postprocess()
+	if err != nil {
+		return
+	}
+	// now process the named services. it is an error if any is disabled
+	// also, normalize the service names to lowercase
+	services := make(map[string]jwt.JwtServiceConfig, len(config.Extjwt.Services))
+	for service, sConf := range config.Extjwt.Services {
+		err := sConf.Postprocess()
+		if err != nil {
+			return err
+		}
+		if !sConf.Enabled() {
+			return fmt.Errorf("no keys enabled for extjwt service %s", service)
+		}
+		services[strings.ToLower(service)] = sConf
+	}
+	config.Extjwt.Services = services
 	return nil
 }
 
@@ -925,6 +966,10 @@ func LoadConfig(filename string) (config *Config, err error) {
 		config.Accounts.Multiclient.AlwaysOn = PersistentDisabled
 	} else if config.Accounts.Multiclient.AlwaysOn >= PersistentOptOut {
 		config.Accounts.Multiclient.AllowedByDefault = true
+	}
+
+	if config.Accounts.NickReservation.ForceNickEqualsAccount && !config.Accounts.Multiclient.Enabled {
+		return nil, errors.New("force-nick-equals-account requires enabling multiclient as well")
 	}
 
 	// handle guest format, including the legacy key rename-prefix
@@ -1131,6 +1176,11 @@ func LoadConfig(filename string) (config *Config, err error) {
 		}
 	}
 
+	err = config.processExtjwt()
+	if err != nil {
+		return nil, err
+	}
+
 	// now that all postprocessing is complete, regenerate ISUPPORT:
 	err = config.generateISupport()
 	if err != nil {
@@ -1157,6 +1207,7 @@ func (config *Config) generateISupport() (err error) {
 	isupport := &config.Server.isupport
 	isupport.Initialize()
 	isupport.Add("AWAYLEN", strconv.Itoa(config.Limits.AwayLen))
+	isupport.Add("BOT", "B")
 	isupport.Add("CASEMAPPING", "ascii")
 	isupport.Add("CHANLIMIT", fmt.Sprintf("%s:%d", chanTypes, config.Channels.MaxChannelsPerClient))
 	isupport.Add("CHANMODES", strings.Join([]string{modes.Modes{modes.BanMask, modes.ExceptMask, modes.InviteMask}.String(), modes.Modes{modes.Key}.String(), modes.Modes{modes.UserLimit}.String(), modes.Modes{modes.InviteOnly, modes.Moderated, modes.NoOutside, modes.OpOnlyTopic, modes.ChanRoleplaying, modes.Secret, modes.NoCTCP, modes.RegisteredOnly}.String()}, ","))
@@ -1167,6 +1218,9 @@ func (config *Config) generateISupport() (err error) {
 	isupport.Add("CHANTYPES", chanTypes)
 	isupport.Add("ELIST", "U")
 	isupport.Add("EXCEPTS", "")
+	if config.Extjwt.Default.Enabled() || len(config.Extjwt.Services) != 0 {
+		isupport.Add("EXTJWT", "1")
+	}
 	isupport.Add("INVEX", "")
 	isupport.Add("KICKLEN", strconv.Itoa(config.Limits.KickLen))
 	isupport.Add("MAXLIST", fmt.Sprintf("beI:%s", strconv.Itoa(config.Limits.ChanListModes)))
@@ -1181,7 +1235,7 @@ func (config *Config) generateISupport() (err error) {
 		isupport.Add("RPUSER", "E")
 	}
 	isupport.Add("STATUSMSG", "~&@%+")
-	isupport.Add("TARGMAX", fmt.Sprintf("NAMES:1,LIST:1,KICK:1,WHOIS:1,USERHOST:10,PRIVMSG:%s,TAGMSG:%s,NOTICE:%s,MONITOR:", maxTargetsString, maxTargetsString, maxTargetsString))
+	isupport.Add("TARGMAX", fmt.Sprintf("NAMES:1,LIST:1,KICK:1,WHOIS:1,USERHOST:10,PRIVMSG:%s,TAGMSG:%s,NOTICE:%s,MONITOR:%d", maxTargetsString, maxTargetsString, maxTargetsString, config.Limits.MonitorEntries))
 	isupport.Add("TOPICLEN", strconv.Itoa(config.Limits.TopicLen))
 	if config.Server.Casemapping == CasemappingPRECIS {
 		isupport.Add("UTF8MAPPING", precisUTF8MappingToken)
@@ -1253,4 +1307,35 @@ func compileGuestRegexp(guestFormat string, casemapping Casemapping) (standard, 
 	}
 	folded, err = utils.CompileGlob(fmt.Sprintf("%s*%s", initialFolded, finalFolded), false)
 	return
+}
+
+func (config *Config) loadMOTD() error {
+	if config.Server.MOTD != "" {
+		file, err := os.Open(config.Server.MOTD)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		contents, err := ioutil.ReadAll(file)
+		if err != nil {
+			return err
+		}
+
+		lines := bytes.Split(contents, []byte{'\n'})
+		for i, line := range lines {
+			lineToSend := string(bytes.TrimRight(line, "\r\n"))
+			if len(lineToSend) == 0 && i == len(lines)-1 {
+				// if the last line of the MOTD was properly terminated with \n,
+				// there's no need to send a blank line to clients
+				continue
+			}
+			if config.Server.MOTDFormatting {
+				lineToSend = ircfmt.Unescape(lineToSend)
+			}
+			// "- " is the required prefix for MOTD
+			lineToSend = fmt.Sprintf("- %s", lineToSend)
+			config.Server.motdLines = append(config.Server.motdLines, lineToSend)
+		}
+	}
+	return nil
 }

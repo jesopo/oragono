@@ -37,11 +37,6 @@ func servCmdRequiresBouncerEnabled(config *Config) bool {
 
 const (
 	nsPrefix = "NickServ!NickServ@localhost"
-	// ZNC's nickserv module will not detect this unless it is:
-	// 1. sent with prefix `nickserv`
-	// 2. contains the string "identify"
-	// 3. contains at least one of several other magic strings ("msg" works)
-	nsTimeoutNotice = `This nickname is reserved. Please login within %v (using $b/msg NickServ IDENTIFY <password>$b or SASL), or switch to a different nickname.`
 )
 
 const nickservHelp = `NickServ lets you register, log in to, and manage an account.`
@@ -249,10 +244,8 @@ SET modifies your account settings. The following settings are available:`,
 'enforce' lets you specify a custom enforcement mechanism for your registered
 nicknames. Your options are:
 1. 'none'    [no enforcement, overriding the server default]
-2. 'timeout' [anyone using the nick must authenticate before a deadline,
-              or else they will be renamed]
-3. 'strict'  [you must already be authenticated to use the nick]
-4. 'default' [use the server default]`,
+2. 'strict'  [you must already be authenticated to use the nick]
+3. 'default' [use the server default]`,
 
 				`$bMULTICLIENT$b
 If 'multiclient' is enabled and you are already logged in and using a nick, a
@@ -655,14 +648,11 @@ func nsGroupHandler(server *Server, client *Client, command string, params []str
 }
 
 func nsLoginThrottleCheck(client *Client, rb *ResponseBuffer) (success bool) {
-	client.stateMutex.Lock()
-	throttled, remainingTime := client.loginThrottle.Touch()
-	client.stateMutex.Unlock()
+	throttled, remainingTime := client.checkLoginThrottle()
 	if throttled {
 		nsNotice(rb, fmt.Sprintf(client.t("Please wait at least %v and try again"), remainingTime))
-		return false
 	}
-	return true
+	return !throttled
 }
 
 func nsIdentifyHandler(server *Server, client *Client, command string, params []string, rb *ResponseBuffer) {
@@ -691,9 +681,6 @@ func nsIdentifyHandler(server *Server, client *Client, command string, params []
 
 	// try passphrase
 	if passphrase != "" {
-		if !nsLoginThrottleCheck(client, rb) {
-			return
-		}
 		err = server.accounts.AuthenticateByPassphrase(client, username, passphrase)
 		loginSuccessful = (err == nil)
 	}
@@ -807,6 +794,14 @@ func nsRegisterHandler(server *Server, client *Client, command string, params []
 			return
 		} else {
 			passphrase = ""
+		}
+	}
+
+	if passphrase != "" {
+		cfPassphrase, err := Casefold(passphrase)
+		if err == nil && cfPassphrase == details.nickCasefolded {
+			nsNotice(rb, client.t("Usage: REGISTER <passphrase> [email]")) // #1179
+			return
 		}
 	}
 
@@ -1076,6 +1071,9 @@ func nsSessionsHandler(server *Server, client *Client, command string, params []
 		} else {
 			nsNotice(rb, fmt.Sprintf(client.t("Session %d:"), i+1))
 		}
+		if session.deviceID != "" {
+			nsNotice(rb, fmt.Sprintf(client.t("Device ID:   %s"), session.deviceID))
+		}
 		nsNotice(rb, fmt.Sprintf(client.t("IP address:  %s"), session.ip.String()))
 		nsNotice(rb, fmt.Sprintf(client.t("Hostname:    %s"), session.hostname))
 		nsNotice(rb, fmt.Sprintf(client.t("Created at:  %s"), session.ctime.Format(time.RFC1123)))
@@ -1101,6 +1099,8 @@ func nsCertHandler(server *Server, client *Client, command string, params []stri
 			target, certfp = params[0], params[1]
 		} else if len(params) == 1 {
 			certfp = params[0]
+		} else if len(params) == 0 && verb == "add" && rb.session.certfp != "" {
+			certfp = rb.session.certfp // #1059
 		} else {
 			nsNotice(rb, client.t("Invalid parameters"))
 			return

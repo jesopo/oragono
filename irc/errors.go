@@ -8,6 +8,7 @@ package irc
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/oragono/oragono/irc/utils"
 )
@@ -64,6 +65,13 @@ var (
 	errEmptyCredentials               = errors.New("No more credentials are approved")
 	errCredsExternallyManaged         = errors.New("Credentials are externally managed and cannot be changed here")
 	errInvalidMultilineBatch          = errors.New("Invalid multiline batch")
+	errTimedOut                       = errors.New("Operation timed out")
+	errInvalidUtf8                    = errors.New("Message rejected for invalid utf8")
+	errClientDestroyed                = errors.New("Client was already destroyed")
+	errTooManyChannels                = errors.New("You have joined too many channels")
+	errWrongChannelKey                = errors.New("Cannot join password-protected channel without the password")
+	errInviteOnly                     = errors.New("Cannot join invite-only channel without an invite")
+	errRegisteredOnly                 = errors.New("Cannot join registered-only channel without an account")
 )
 
 // Socket Errors
@@ -86,6 +94,14 @@ type CertKeyError struct {
 
 func (ck *CertKeyError) Error() string {
 	return fmt.Sprintf("Invalid TLS cert/key pair: %v", ck.Err)
+}
+
+type ThrottleError struct {
+	time.Duration
+}
+
+func (te *ThrottleError) Error() string {
+	return fmt.Sprintf(`Please wait at least %v and try again`, te.Duration)
 }
 
 // Config Errors

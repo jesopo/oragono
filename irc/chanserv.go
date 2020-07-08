@@ -249,7 +249,7 @@ func csAmodeHandler(server *Server, client *Client, command string, params []str
 		}
 	case modes.Add, modes.Remove:
 		if len(affectedModes) > 0 {
-			csNotice(rb, fmt.Sprintf(client.t("Successfully set persistent mode %s%s on %s"), string(change.Op), string(change.Mode), change.Arg))
+			csNotice(rb, fmt.Sprintf(client.t("Successfully set persistent mode %[1]s on %[2]s"), strings.Join([]string{string(change.Op), string(change.Mode)}, ""), change.Arg))
 			// #729: apply change to current membership
 			for _, member := range channel.Members() {
 				if member.Account() == change.Arg {
@@ -305,7 +305,7 @@ func csOpHandler(server *Server, client *Client, command string, params []string
 		announceCmodeChanges(channelInfo, modes.ModeChanges{change}, chanservMask, "*", "", rb)
 	}
 
-	csNotice(rb, fmt.Sprintf(client.t("Successfully op'd in channel %s"), channelName))
+	csNotice(rb, client.t("Successfully granted operator privileges"))
 
 	tnick := target.Nick()
 	server.logger.Info("services", fmt.Sprintf("Client %s op'd [%s] in channel %s", client.Nick(), tnick, channelName))

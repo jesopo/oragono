@@ -1,8 +1,8 @@
 # Changelog
 All notable changes to Oragono will be documented in this file.
 
-## [2.1.0-rc1] - 2020-05-25
-We're pleased to be publishing the release candidate for 2.1.0 (the official release should follow in a week or so).
+## [2.1.0] - 2020-06-01
+We're pleased to announce Oragono 2.1.0, a new stable release.
 
 Since the release of 2.0.0 in March, a number of new communities and organizations have adopted Oragono as a communications tool. This new release incorporates many improvements and fixes derived from the experiences of real-world operators and end users. Highlights include:
 
@@ -10,7 +10,7 @@ Since the release of 2.0.0 in March, a number of new communities and organizatio
 * Tighter control over the relationship between account names and nicknames, eliminating the need for extbans
 * Support for sending account verification emails directly from Oragono, including DKIM signatures
 
-Many thanks to [@ajaspers](https://github.com/ajaspers) and [@hhirtz](https://github.com/hhirtz) for contributing patches, to [@ajaspers](https://github.com/ajaspers), [@eklitzke](https://github.com/eklitzke), and [@hhirtz](https://github.com/hhirtz) for contributing code reviews, to [@ajaspers](https://github.com/ajaspers), [@bogdomania](https://github.com/bogdomania), [@clukawski](https://github.com/clukawski), Csibesz, [@csmith](https://github.com/csmith), [@eklitzke](https://github.com/eklitzke), [@nxths](https://github.com/nxths), [@hhirtz](https://github.com/hhirtz), [@jesopo](https://github.com/jesopo), [@jlnt](https://github.com/jlnt), [@justjanne](https://github.com/justjanne), [@jwheare](https://github.com/jwheare), [@k4bek4be](https://github.com/k4bek4be), [@kula](https://github.com/kula), [@kylef](https://github.com/kylef), [@Mitaka8](https://github.com/Mitaka8), [@petteri](https://github.com/petteri), [@PizzaLover2007](https://github.com/PizzaLover2007), [@prawnsalad](https://github.com/prawnsalad), [@RyanSquared](https://github.com/RyanSquared), savoyard, and [@xPaw](https://github.com/xPaw) for reporting issues, and to TODO: TRANSLATORS for contributing translations.
+Many thanks to [@ajaspers](https://github.com/ajaspers) and [@hhirtz](https://github.com/hhirtz) for contributing patches, to [@ajaspers](https://github.com/ajaspers), [@eklitzke](https://github.com/eklitzke), and [@hhirtz](https://github.com/hhirtz) for contributing code reviews, to [@ajaspers](https://github.com/ajaspers), [@bogdomania](https://github.com/bogdomania), [@clukawski](https://github.com/clukawski), Csibesz, [@csmith](https://github.com/csmith), [@eklitzke](https://github.com/eklitzke), [@nxths](https://github.com/nxths), [@hhirtz](https://github.com/hhirtz), [@jesopo](https://github.com/jesopo), [@jlnt](https://github.com/jlnt), [@justjanne](https://github.com/justjanne), [@jwheare](https://github.com/jwheare), [@k4bek4be](https://github.com/k4bek4be), [@KoraggKnightWolf](https://github.com/KoraggKnightWolf), [@kula](https://github.com/kula), [@kylef](https://github.com/kylef), [@Mitaka8](https://github.com/Mitaka8), [@petteri](https://github.com/petteri), [@PizzaLover2007](https://github.com/PizzaLover2007), [@prawnsalad](https://github.com/prawnsalad), [@RyanSquared](https://github.com/RyanSquared), savoyard, and [@xPaw](https://github.com/xPaw) for reporting issues, and to [@bogdomania](https://github.com/bogdomania), [@boppy](https://github.com/boppy), Nuve, stickytoffeepuddingwithcaramel, and [@vegax87](https://github.com/vegax87) for contributing translations.
 
 This release includes changes to the config file format, including one breaking change: support for `server.ip-cloaking.secret-environment-variable` has been removed. (See below for instructions on how to upgrade if you were using this feature.) All other changes to the config file format are backwards compatible and do not require updating before restart.
 
@@ -45,6 +45,7 @@ This release includes a change to the MySQL schema. This change will be applied 
 * Fixed incorrect enforcement of ban/invite/exception masks under some circumstances (#983)
 * STATUSMSG were being stored in history without the relevant minimum-prefix information, so they could be replayed to unprivileged users. This was fixed by not storing them at all. (#959, thanks [@prawnsalad](https://github.com/prawnsalad)!)
 * Fixed invisible users not being hidden from `WHO *` queries (#991, thanks [@ajaspers](https://github.com/ajaspers)!)
+* Restricted nicknames of some additional common services: `OperServ`, `BotServ`, `MemoServ`, and `Global` (#1080, thanks [@KoraggKnightWolf](https://github.com/KoraggKnightWolf)!)
 
 ### Fixed
 * Fixed incorrect rejection of `draft/multiline` messages containing blank lines (#1005, thanks [@jwheare](https://github.com/jwheare)!)
@@ -53,19 +54,26 @@ This release includes a change to the MySQL schema. This change will be applied 
 * Fixed some channels not being unregistered during account unregistration (#889)
 * Fixed `/NICKSERV SET` and related commands being unavailable when account registration is disabled (#922, thanks [@PizzaLover2007](https://github.com/PizzaLover2007)!)
 * Fixed `TAGMSG` not being replayed correctly in history (#1044)
+* Fixed incorrect `401 ERR_NOSUCHNICK` responses on `TAGMSG` sent to a service (#1051, thanks [@ajaspers](https://github.com/ajaspers)!)
 * Fixed `301 RPL_AWAY` not being sent in `WHOIS` responses when applicable (#850)
 * `/OPER` with no password no longer disconnects the client (#951)
 * Fixed failure to send extended-join responses after account unregistration (#933, thanks [@jesopo](https://github.com/jesopo)!)
 * Improved validation of channel keys (#1021, thanks [@kylef](https://github.com/kylef)!)
 * Fixed labeling of `421 ERR_UNKNOWNCOMMAND` responses (#994, thanks [@k4bek4be](https://github.com/k4bek4be)!)
 * Fixed incorrect parsing of ident protocol responses (#1002, thanks [@justjanne](https://github.com/justjanne)!)
+* Fixed registration completing after `NICK` and an ident response, without waiting for `USER` (#1057, thanks [@KoraggKnightWolf](https://github.com/KoraggKnightWolf)!)
+* Fixed messages rejected by the `+R` mode being stored in history (#1061, thanks [@KoraggKnightWolf](https://github.com/KoraggKnightWolf)!)
 * Fixed redundant `/INVITE` commands not sending `443 ERR_USERONCHANNEL` (#842, thanks [@hhirtz](https://github.com/hhirtz)!)
 * Fixed `/NICKSERV REGISTER` response displaying `mailto:` out of context (#985, thanks [@eklitzke](https://github.com/eklitzke)!)
+* Fixed nickname changes not sending `731 RPL_MONOFFLINE` when appropriate (#1076, thanks [@ajaspers](https://github.com/ajaspers)!)
+* Fixed incorrect MONITOR responses in some cases (#1086, thanks [@ajaspers](https://github.com/ajaspers)!)
 * Fixed HostServ approval and rejection notices being sent from the wrong source (#805)
 * Error messages for invalid TLS certificate/key pairs are now more informative (#982)
 * Fixed error message when attempting to attach a plaintext session to an always-on client (#955, thanks [@bogdomania](https://github.com/bogdomania) and [@xPaw](https://github.com/xPaw)!)
 * Increased the TLS handshake timeout, increasing reliability under high CPU contention (#894)
 * Fixed `CHANMODES` ISUPPORT token (#408, #874, thanks [@hhirtz](https://github.com/hhirtz)!)
+* Fixed `002 RPL_MYINFO` parameters (#1058, thanks [@KoraggKnightWolf](https://github.com/KoraggKnightWolf)!)
+* Fixed incorrect parameter limit for `MONITOR` in the `TARGMAX` isupport token (#1090, thanks [@KoraggKnightWolf](https://github.com/KoraggKnightWolf)!)
 * Fixed edge cases in handling of the `+k` channel mode parameter (#874, thanks [@hhirtz](https://github.com/hhirtz)!)
 * `account-notify` lines are now part of the labeled-response batch when applicable (#1018)
 * Fixed incorrect help description of channel mode `+R` (#930, thanks [@PizzaLover2007](https://github.com/PizzaLover2007)!)
@@ -81,6 +89,7 @@ This release includes a change to the MySQL schema. This change will be applied 
 * Account unregistration now always disconnects the client (#1028)
 * Fakelag is now temporarily disabled during the sending of a `draft/multiline` message batch (#817)
 * Failed attempts to join a `+R` channel now send `477 ERR_NEEDREGGEDNICK` (#936, thanks [@PizzaLover2007](https://github.com/PizzaLover2007), [@jesopo](https://github.com/jesopo)!)
+* `353 RPL_NAMREPLY` now always uses a trailing parameter, for compatibility with incorrect client implementations (#854, #862)
 * Channels with persistent history can no longer be renamed with `/RENAME` (#827)
 * The self-signed certificate generation command `oragono mkcerts` now generates a 2048-bit RSA certificate, instead of a NIST P-521 ECDSA certificate (#898)
 * Cleaned up compatibility with an obsolete WEBIRC escaping convention (#869)

@@ -51,6 +51,7 @@ Oragono supports the following channel modes:
   +R  |  Only registered users can join the channel.
   +s  |  Secret mode, channel won't show up in /LIST or whois replies.
   +t  |  Only channel opers can modify the topic.
+  +C  |  Clients are blocked from sending CTCP messages in the channel.
 
 = Prefixes =
 
@@ -68,7 +69,8 @@ Oragono supports the following user modes:
   +o  |  User is an IRC operator.
   +R  |  User only accepts messages from other registered users. 
   +s  |  Server Notice Masks (see help with /HELPOP snomasks).
-  +Z  |  User is connected via TLS.`
+  +Z  |  User is connected via TLS.
+  +T  |  User is blocked from sending CTCP messages.`
 	snomaskHelpText = `== Server Notice Masks ==
 
 Oragono supports the following server notice masks for operators:
@@ -83,6 +85,7 @@ Oragono supports the following server notice masks for operators:
   t  |  Local /STATS usage.
   u  |  Local client account actions.
   x  |  Local X-lines (DLINE/KLINE/etc).
+  v  |  Local vhost changes.
 
 To set a snomask, do this with your nickname:
 
@@ -197,6 +200,11 @@ ON <server> specifies that the ban is to be set on that specific server.
 [reason] and [oper reason], if they exist, are separated by a vertical bar (|).
 
 If "DLINE LIST" is sent, the server sends back a list of our current DLINEs.`,
+	},
+	"extjwt": {
+		text: `EXTJWT <target> [service_name]
+
+Get a JSON Web Token for target (either * or a channel name).`,
 	},
 	"help": {
 		text: `HELP <argument>
@@ -432,6 +440,11 @@ The SCENE command is used to send a scene notification to the given target.`,
 
 The SETNAME command updates the realname to be the newly-given one.`,
 	},
+	"summon": {
+		text: `SUMMON [parameters]
+
+The SUMMON command is not implemented.`,
+	},
 	"tagmsg": {
 		text: `@+client-only-tags TAGMSG <target>{,<target>}
 
@@ -491,6 +504,11 @@ For example:
 
 Used in connection registration, sets your username and realname to the given
 values (though your username may also be looked up with Ident).`,
+	},
+	"users": {
+		text: `USERS [parameters]
+
+The USERS command is not implemented.`,
 	},
 	"userhost": {
 		text: `USERHOST <nickname>{ <nickname>}

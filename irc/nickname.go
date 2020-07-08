@@ -18,6 +18,9 @@ import (
 var (
 	restrictedNicknames = []string{
 		"=scene=", // used for rp commands
+		"Global",  // global announcements on some networks
+		// common services not implemented by us:
+		"MemoServ", "BotServ", "OperServ",
 	}
 
 	restrictedCasefoldedNicks = make(map[string]bool)
@@ -89,8 +92,11 @@ func performNickChange(server *Server, client *Client, target *Client, session *
 	}
 
 	if target.Registered() {
-		client.server.monitorManager.AlertAbout(target, true)
-		target.nickTimer.Touch(rb)
+		newCfnick := target.NickCasefolded()
+		if newCfnick != details.nickCasefolded {
+			client.server.monitorManager.AlertAbout(details.nick, details.nickCasefolded, false)
+			client.server.monitorManager.AlertAbout(assignedNickname, newCfnick, true)
+		}
 	} // else: these will be deferred to the end of registration (see #572)
 	return nil
 }

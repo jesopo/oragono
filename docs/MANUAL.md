@@ -29,6 +29,7 @@ _Copyright © Daniel Oaks <daniel@danieloaks.net>, Shivaram Lingamneni <slingamn
 - Features
     - User Accounts
         - Nickname reservation
+        - Email verification
     - Channel Registration
     - Language
     - Multiclient ("Bouncer")
@@ -46,6 +47,7 @@ _Copyright © Daniel Oaks <daniel@danieloaks.net>, Shivaram Lingamneni <slingamn
     - Kiwi IRC
     - HOPM
     - Tor
+    - External authentication systems
 - Acknowledgements
 
 
@@ -95,7 +97,7 @@ To get started with Oragono on Windows:
 
 1. Make sure you have the [latest release](https://github.com/oragono/oragono/releases/latest) downloaded.
 1. Extract the zip file to a folder.
-1. Copy and rename `oragono.yaml` to `ircd.yaml`.
+1. Copy and rename `default.yaml` to `ircd.yaml`.
 1. Open up `ircd.yaml` using any text editor, and then save it once you're happy.
 1. Open up a `cmd.exe` window, then `cd` to where you have Oragono extracted.
 1. Run `oragono.exe mkcerts` if you want to generate new self-signed SSL/TLS certificates (note that you can't enable STS if you use self-signed certs).
@@ -109,7 +111,7 @@ To get started with Oragono on macOS, Linux, or on a Raspberry Pi:
 
 1. Make sure you have the [latest release](https://github.com/oragono/oragono/releases/latest) for your OS/distro downloaded.
 1. Extract the tar.gz file to a folder.
-1. Copy and rename `oragono.yaml` to `ircd.yaml`.
+1. Copy and rename `default.yaml` to `ircd.yaml`.
 1. Open up `ircd.yaml` using any text editor, and then save it once you're happy.
 1. Open up a Terminal window, then `cd` to where you have Oragono extracted.
 1. Run `./oragono mkcerts` if you want to generate new self-signed SSL/TLS certificates (note that you can't enable STS if you use self-signed certs).
@@ -140,7 +142,7 @@ The recommended way to operate oragono as a service on Linux is via systemd. Thi
 The only major distribution that currently packages Oragono is Arch Linux; the aforementioned AUR package includes a systemd unit file. However, it should be fairly straightforward to set up a productionized Oragono on any Linux distribution. Here's a quickstart guide for Debian/Ubuntu:
 
 1. Create a dedicated, unprivileged role user who will own the oragono process and all its associated files: `adduser --system --group oragono`. This user now has a home directory at `/home/oragono`.
-1. Copy the executable binary `oragono`, the config file `ircd.yaml`, the database `ircd.db`, and the self-signed TLS certificate (`tls.crt` and `tls.key`) to `/home/oragono`. Ensure that they are all owned by the new oragono role user: `sudo chown oragono:oragono /home/oragono/*`. Ensure that the configuration file logs to stderr.
+1. Copy the executable binary `oragono`, the config file `ircd.yaml`, the database `ircd.db`, and the self-signed TLS certificate (`fullchain.pem` and `privkey.pem`) to `/home/oragono`. Ensure that they are all owned by the new oragono role user: `sudo chown oragono:oragono /home/oragono/*`. Ensure that the configuration file logs to stderr.
 1. Install our example [oragono.service](https://github.com/oragono/oragono/blob/master/distrib/systemd/oragono.service) file to `/etc/systemd/system/oragono.service`.
 1. Enable and start the new service with the following commands:
     1. `systemctl daemon-reload`
@@ -159,9 +161,9 @@ The other major hurdle for productionizing (but one well worth the effort) is ob
 set -eu
 
 umask 077
-cp /etc/letsencrypt/live/example.com/fullchain.pem /home/oragono/tls.crt
-cp /etc/letsencrypt/live/example.com/privkey.pem /home/oragono/tls.key
-chown oragono:oragono /home/oragono/tls.*
+cp /etc/letsencrypt/live/example.com/fullchain.pem /home/oragono/
+cp /etc/letsencrypt/live/example.com/privkey.pem /home/oragono/
+chown oragono:oragono /home/oragono/*.pem
 # rehash oragono, which will reload the certificates:
 systemctl reload oragono.service
 ````
@@ -219,9 +221,9 @@ Oragono supports several different modes of operation with respect to accounts a
 
 ### Traditional / lenient mode
 
-This is the default mode, and makes Oragono's services act similar to Quakenet's Q bot. In this mode, users cannot own or reserve nicknames. In other words, there is no connection between account names and nicknames. Anyone can use any nickname (as long as it's not already in use by another running client). However, accounts are still useful: they can be used to register channels (see below), and some IRCv3-capable clients (with the `account-tag` or `extended-join` capabilities) may be able to take advantage of them.
+This makes Oragono's services act similar to Quakenet's Q bot. In this mode, users cannot own or reserve nicknames. In other words, there is no connection between account names and nicknames. Anyone can use any nickname (as long as it's not already in use by another running client). However, accounts are still useful: they can be used to register channels (see below), and some IRCv3-capable clients (with the `account-tag` or `extended-join` capabilities) may be able to take advantage of them.
 
-To enable this mode, set the following configs (this is the default mode):
+To enable this mode, set the following configs:
 
 * `accounts.registration.enabled = true`
 * `accounts.authentication-enabled = true`
@@ -229,22 +231,17 @@ To enable this mode, set the following configs (this is the default mode):
 
 ### Nick ownership
 
-This mode makes Oragono's services act like those of a typical IRC network (like Freenode). In this mode, registering an account gives you privileges over the use of that account as a nickname. The server will then help you to enforce control over your nickname(s):
-
-* You can proactively prevent anyone from using your nickname, unless they're already logged into your account
-* Alternately, you can give clients a grace period to log into your account, but if they don't and the grace period expires, the server will change their nickname to something else
-* Alternately, you can forego any proactive enforcement – but if you decide you want to reclaim your nickname from a squatter, you can `/msg Nickserv ghost stolen_nickname` and they'll be disconnected
-* You can associate additional nicknames with your account by changing to it and then issuing `/msg NickServ group`
+In this mode (the default), registering an account gives you privileges over the use of that account as a nickname. The server will then help you to enforce control over your nickname(s). No one will be able to use your nickname unless they are logged into your account.
 
 To enable this mode, set the following configs:
 
 * `accounts.registration.enabled = true`
 * `accounts.authentication-enabled = true`
 * `accounts.nick-reservation.enabled = true`
+* `accounts.nick-reservation.method = strict`
 
 The following additional configs may be of interest:
 
-* `accounts.nick-reservation.method = strict` ; we currently recommend strict nickname enforcement as the default, since we've found that users find it less confusing.
 * `accounts.nick-reservation.force-nick-equals-account = true` ; this allows nicknames to be treated as account names for most purposes, including for controlling access to channels (see the discussion of private channels below)
 
 ### SASL-only mode
@@ -259,11 +256,28 @@ To enable this mode, set the following configs:
 * `accounts.authentication-enabled = true`
 * `accounts.require-sasl.enabled = true`
 * `accounts.nick-reservation.enabled = true`
-
-Additionally, the following configs are recommended:
-
 * `accounts.nick-reservation.method = strict`
 * `accounts.nick-reservation.force-nick-equals-account = true`
+
+### Email verification
+
+By default, account registrations complete immediately and do not require a verification step. However, like other service frameworks, Oragono's NickServ can be configured to require email verification of registrations. The main challenge here is to prevent your emails from being marked as spam, which you can do by configuring [SPF](https://en.wikipedia.org/wiki/Sender_Policy_Framework), [DKIM](https://en.wikipedia.org/wiki/DomainKeys_Identified_Mail), and [DMARC](https://en.wikipedia.org/wiki/DMARC). For example, this configuration (when added to the `accounts.registration` section) enables email verification, with the emails being signed with a DKIM key and sent directly from Oragono:
+
+```yaml
+        enabled-callbacks:
+            - mailto
+
+        callbacks:
+            mailto:
+                sender: "admin@my.network"
+                require-tls: true
+                dkim:
+                    domain: "my.network"
+                    selector: "20200525"
+                    key-file: "dkim-private-20200525.pem"
+```
+
+You must create the corresponding TXT record `20200525._domainkey.my.network` to hold your public key. You can also use an MTA ("relay" or "smarthost") to send the email, in which case DKIM signing can be deferred to the MTA; see the example config for details.
 
 
 ## Channel Registration
@@ -318,7 +332,7 @@ Our language and translation functionality is very early, so feel free to let us
 
 Traditionally, every connection to an IRC server is separate must use a different nickname. [Bouncers](https://en.wikipedia.org/wiki/BNC_%28software%29#IRC) are used to work around this, by letting multiple clients connect to a single nickname. With Oragono, if the server is configured to allow it, multiple clients can share a single nickname without needing a bouncer. To use this feature, both connections must authenticate with SASL to the same user account and then use the same nickname during connection registration (while connecting to the server) – once you've logged-in, you can't share another nickname.
 
-To enable this functionality, set `accounts.multiclient.enabled` to `true`. Setting `accounts.multiclient.allowed-by-default` to `true` will allow this for everyone. If `allowed-by-default` is `false` (but `enabled` is still `true`), users can opt in to shared connections using `/msg NickServ SET multiclient on`.
+To enable this functionality, set `accounts.multiclient.enabled` to `true`. Setting `accounts.multiclient.allowed-by-default` to `true` will allow this for everyone. If `allowed-by-default` is `false` (but `enabled` is still `true`), users can opt in to shared connections using `/msg NickServ SET multiclient true`.
 
 You can see a list of your active sessions and their idle times with `/msg NickServ sessions` (network operators can use `/msg NickServ sessions nickname` to see another user's sessions).
 
@@ -428,8 +442,8 @@ Many clients do not have this support. However, you can designate port 6667 as a
 
         ":6697":
             tls:
-                key: tls.key
-                cert: tls.crt
+                cert: fullchain.pem
+                key: privkey.pem
 
     sts:
         enabled: true
@@ -490,9 +504,9 @@ To unset this mode and let anyone speak to you:
 
     /mode dan -R
 
-### +s - Server Notice Masks
+### +s - Server Notice Masks ("snomasks")
 
-This is a special 'list mode'. If you're an IRC operator, this mode lets you see special server notices that get sent out. See the Server Notice Masks section for more information on this mode.
+This is a special 'list mode'. If you're an IRC operator, this mode lets you see special server notices that get sent out. See `/helpop snomasks` (as an operator) for more information on this mode.
 
 ### +Z - TLS
 
@@ -832,6 +846,38 @@ Instructions on how client software should connect to an .onion address are outs
 ZNC 1.6.x (still pretty common in distros that package old versions of IRC software) has a [bug](https://github.com/znc/znc/issues/1212) where it fails to recognize certain SASL messages. Oragono supports a compatibility mode that works around this to let ZNC complete the SASL handshake: this can be enabled with `server.compatibility.send-unprefixed-sasl`.
 
 Oragono can emulate certain capabilities of the ZNC bouncer for the benefit of clients, in particular the third-party [playback](https://wiki.znc.in/Playback) module. This enables clients with specific support for ZNC to receive selective history playback automatically. To configure this in [Textual](https://www.codeux.com/textual/), go to "Server properties", select "Vendor specific", uncheck "Do not automatically join channels on connect", and check "Only play back messages you missed". Other clients with support are listed on ZNC's wiki page.
+
+## External authentication systems
+
+Oragono can be configured to call arbitrary scripts to authenticate users; see the `auth-script` section of the config. The API for these scripts is as follows: Oragono will invoke the script with a configurable set of arguments, then send it the authentication data as JSON on the first line (`\n`-terminated) of stdin. The input is a JSON dictionary with the following keys:
+
+* `accountName`: during passphrase-based authentication, this is a string, otherwise omitted
+* `passphrase`: during passphrase-based authentication, this is a string, otherwise omitted
+* `certfp`: during certfp-based authentication, this is a string, otherwise omitted
+* `ip`: a string representation of the client's IP address
+
+The script must print a single line (`\n`-terminated) to its output and exit. This line must be a JSON dictionary with the following keys:
+
+* `success`, a boolean indicating whether the authentication was successful
+* `accountName`, a string containing the normalized account name (in the case of passphrase-based authentication, it is permissible to return the empty string or omit the value)
+* `error`, containing a human-readable description of the authentication error to be logged if applicable
+
+Here is a toy example of an authentication script in Python that checks that the account name and the password are equal (and rejects any attempts to authenticate via certfp):
+
+```
+#!/usr/bin/python3
+
+import sys, json
+
+raw_input = sys.stdin.readline()
+input = json.loads(b)
+account_name = input.get("accountName")
+passphrase = input.get("passphrase")
+success = bool(account_name) and bool(passphrase) and account_name == passphrase
+print(json.dumps({"success": success})
+```
+
+Note that after a failed script invocation, Oragono will proceed to check the credentials against its local database.
 
 
 --------------------------------------------------------------------------------------------

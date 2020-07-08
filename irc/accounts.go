@@ -17,7 +17,6 @@ import (
 
 	"github.com/oragono/oragono/irc/connection_limits"
 	"github.com/oragono/oragono/irc/email"
-	"github.com/oragono/oragono/irc/ldap"
 	"github.com/oragono/oragono/irc/modes"
 	"github.com/oragono/oragono/irc/passwd"
 	"github.com/oragono/oragono/irc/utils"
@@ -617,11 +616,12 @@ func (am *AccountManager) loadModes(account string) (uModes modes.Modes) {
 	return
 }
 
-func (am *AccountManager) saveLastSeen(account string, lastSeen time.Time) {
+func (am *AccountManager) saveLastSeen(account string, lastSeen map[string]time.Time) {
 	key := fmt.Sprintf(keyAccountLastSeen, account)
 	var val string
-	if !lastSeen.IsZero() {
-		val = strconv.FormatInt(lastSeen.UnixNano(), 10)
+	if len(lastSeen) != 0 {
+		text, _ := json.Marshal(lastSeen)
+		val = string(text)
 	}
 	am.server.store.Update(func(tx *buntdb.Tx) error {
 		if val != "" {
@@ -633,20 +633,19 @@ func (am *AccountManager) saveLastSeen(account string, lastSeen time.Time) {
 	})
 }
 
-func (am *AccountManager) loadLastSeen(account string) (lastSeen time.Time) {
+func (am *AccountManager) loadLastSeen(account string) (lastSeen map[string]time.Time) {
 	key := fmt.Sprintf(keyAccountLastSeen, account)
 	var lsText string
 	am.server.store.Update(func(tx *buntdb.Tx) error {
 		lsText, _ = tx.Get(key)
-		// XXX clear this on startup, because it's not clear when it's
-		// going to be overwritten, and restarting the server twice in a row
-		// could result in a large amount of duplicated history replay
-		tx.Delete(key)
 		return nil
 	})
-	lsNum, err := strconv.ParseInt(lsText, 10, 64)
-	if err == nil {
-		return time.Unix(0, lsNum).UTC()
+	if lsText == "" {
+		return nil
+	}
+	err := json.Unmarshal([]byte(lsText), &lastSeen)
+	if err != nil {
+		return nil
 	}
 	return
 }
@@ -873,8 +872,6 @@ func (am *AccountManager) Verify(client *Client, account string, code string) er
 		}
 		if method == NickEnforcementStrict {
 			am.server.RandomlyRename(currentClient)
-		} else if method == NickEnforcementWithTimeout {
-			currentClient.nickTimer.Touch(nil)
 		}
 	}
 	return nil
@@ -1031,6 +1028,18 @@ func (am *AccountManager) checkPassphrase(accountName, passphrase string) (accou
 	return
 }
 
+func (am *AccountManager) loadWithAutocreation(accountName string, autocreate bool) (account ClientAccount, err error) {
+	account, err = am.LoadAccount(accountName)
+	if err == errAccountDoesNotExist && autocreate {
+		err = am.SARegister(accountName, "")
+		if err != nil {
+			return
+		}
+		account, err = am.LoadAccount(accountName)
+	}
+	return
+}
+
 func (am *AccountManager) AuthenticateByPassphrase(client *Client, accountName string, passphrase string) (err error) {
 	// XXX check this now, so we don't allow a redundant login for an always-on client
 	// even for a brief period. the other potential source of nick-account conflicts
@@ -1042,6 +1051,10 @@ func (am *AccountManager) AuthenticateByPassphrase(client *Client, accountName s
 		}
 	}
 
+	if throttled, remainingTime := client.checkLoginThrottle(); throttled {
+		return &ThrottleError{remainingTime}
+	}
+
 	var account ClientAccount
 
 	defer func() {
@@ -1050,19 +1063,18 @@ func (am *AccountManager) AuthenticateByPassphrase(client *Client, accountName s
 		}
 	}()
 
-	ldapConf := am.server.Config().Accounts.LDAP
-	if ldapConf.Enabled {
-		err = ldap.CheckLDAPPassphrase(ldapConf, accountName, passphrase, am.server.logger)
-		if err == nil {
-			account, err = am.LoadAccount(accountName)
-			// autocreate if necessary:
-			if err == errAccountDoesNotExist && ldapConf.Autocreate {
-				err = am.SARegister(accountName, "")
-				if err != nil {
-					return
-				}
-				account, err = am.LoadAccount(accountName)
+	config := am.server.Config()
+	if config.Accounts.AuthScript.Enabled {
+		var output AuthScriptOutput
+		output, err = CheckAuthScript(config.Accounts.AuthScript,
+			AuthScriptInput{AccountName: accountName, Passphrase: passphrase, IP: client.IP().String()})
+		if err != nil {
+			am.server.logger.Error("internal", "failed shell auth invocation", err.Error())
+		} else if output.Success {
+			if output.AccountName != "" {
+				accountName = output.AccountName
 			}
+			account, err = am.loadWithAutocreation(accountName, config.Accounts.AuthScript.Autocreate)
 			return
 		}
 	}
@@ -1233,6 +1245,7 @@ func (am *AccountManager) Unregister(account string, erase bool) error {
 	joinedChannelsKey := fmt.Sprintf(keyAccountJoinedChannels, casefoldedAccount)
 	lastSeenKey := fmt.Sprintf(keyAccountLastSeen, casefoldedAccount)
 	unregisteredKey := fmt.Sprintf(keyAccountUnregistered, casefoldedAccount)
+	modesKey := fmt.Sprintf(keyAccountModes, casefoldedAccount)
 
 	var clients []*Client
 
@@ -1287,6 +1300,7 @@ func (am *AccountManager) Unregister(account string, erase bool) error {
 		tx.Delete(channelsKey)
 		tx.Delete(joinedChannelsKey)
 		tx.Delete(lastSeenKey)
+		tx.Delete(modesKey)
 
 		_, err := tx.Delete(vhostQueueKey)
 		am.decrementVHostQueueCount(casefoldedAccount, err)
@@ -1363,15 +1377,48 @@ func (am *AccountManager) ChannelsForAccount(account string) (channels []string)
 	return unmarshalRegisteredChannels(channelStr)
 }
 
-func (am *AccountManager) AuthenticateByCertFP(client *Client, certfp, authzid string) error {
+func (am *AccountManager) AuthenticateByCertFP(client *Client, certfp, authzid string) (err error) {
 	if certfp == "" {
 		return errAccountInvalidCredentials
+	}
+
+	var clientAccount ClientAccount
+
+	defer func() {
+		if err != nil {
+			return
+		} else if !clientAccount.Verified {
+			err = errAccountUnverified
+			return
+		}
+		// TODO(#1109) clean this check up?
+		if client.registered {
+			if clientAlready := am.server.clients.Get(clientAccount.Name); clientAlready != nil && clientAlready.AlwaysOn() {
+				err = errNickAccountMismatch
+				return
+			}
+		}
+		am.Login(client, clientAccount)
+		return
+	}()
+
+	config := am.server.Config()
+	if config.Accounts.AuthScript.Enabled {
+		var output AuthScriptOutput
+		output, err = CheckAuthScript(config.Accounts.AuthScript,
+			AuthScriptInput{Certfp: certfp, IP: client.IP().String()})
+		if err != nil {
+			am.server.logger.Error("internal", "failed shell auth invocation", err.Error())
+		} else if output.Success && output.AccountName != "" {
+			clientAccount, err = am.loadWithAutocreation(output.AccountName, config.Accounts.AuthScript.Autocreate)
+			return
+		}
 	}
 
 	var account string
 	certFPKey := fmt.Sprintf(keyCertToAccount, certfp)
 
-	err := am.server.store.View(func(tx *buntdb.Tx) error {
+	err = am.server.store.View(func(tx *buntdb.Tx) error {
 		account, _ = tx.Get(certFPKey)
 		if account == "" {
 			return errAccountInvalidCredentials
@@ -1388,19 +1435,8 @@ func (am *AccountManager) AuthenticateByCertFP(client *Client, certfp, authzid s
 	}
 
 	// ok, we found an account corresponding to their certificate
-	clientAccount, err := am.LoadAccount(account)
-	if err != nil {
-		return err
-	} else if !clientAccount.Verified {
-		return errAccountUnverified
-	}
-	if client.registered {
-		if clientAlready := am.server.clients.Get(clientAccount.Name); clientAlready != nil && clientAlready.AlwaysOn() {
-			return errNickAccountMismatch
-		}
-	}
-	am.Login(client, clientAccount)
-	return nil
+	clientAccount, err = am.LoadAccount(account)
+	return err
 }
 
 type settingsMunger func(input AccountSettings) (output AccountSettings, err error)
@@ -1719,9 +1755,9 @@ func (am *AccountManager) applyVHostInfo(client *Client, info VHostInfo) {
 	}
 	oldNickmask := client.NickMaskString()
 	updated := client.SetVHost(vhost)
-	if updated {
+	if updated && client.Registered() {
 		// TODO: doing I/O here is kind of a kludge
-		go client.sendChghost(oldNickmask, client.Hostname())
+		client.sendChghost(oldNickmask, client.Hostname())
 	}
 }
 
@@ -1737,8 +1773,6 @@ func (am *AccountManager) applyVhostToClients(account string, result VHostInfo) 
 
 func (am *AccountManager) Login(client *Client, account ClientAccount) {
 	client.Login(account)
-
-	client.nickTimer.Touch(nil)
 
 	am.applyVHostInfo(client, account.VHost)
 
@@ -1757,7 +1791,7 @@ func (am *AccountManager) Logout(client *Client) {
 		return
 	}
 
-	am.logoutOfAccount(client)
+	client.Logout()
 
 	clients := am.accountToClients[casefoldedAccount]
 	if len(clients) <= 1 {
@@ -1933,16 +1967,4 @@ type rawClientAccount struct {
 	AdditionalNicks string
 	VHost           string
 	Settings        string
-}
-
-// logoutOfAccount logs the client out of their current account.
-// TODO(#1027) delete this entire method and just use client.Logout()
-func (am *AccountManager) logoutOfAccount(client *Client) {
-	if client.Account() == "" {
-		// already logged out
-		return
-	}
-
-	client.Logout()
-	go client.nickTimer.Touch(nil)
 }

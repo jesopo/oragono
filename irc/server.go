@@ -6,7 +6,6 @@
 package irc
 
 import (
-	"bufio"
 	"fmt"
 	"net"
 	"net/http"
@@ -21,6 +20,7 @@ import (
 	"unsafe"
 
 	"github.com/goshuirc/irc-go/ircfmt"
+
 	"github.com/oragono/oragono/irc/caps"
 	"github.com/oragono/oragono/irc/connection_limits"
 	"github.com/oragono/oragono/irc/history"
@@ -36,14 +36,12 @@ var (
 	// common error line to sub values into
 	errorMsg = "ERROR :%s\r\n"
 
-	// supportedUserModesString acts as a cache for when we introduce users
-	supportedUserModesString = modes.SupportedUserModes.String()
-	// supportedChannelModesString acts as a cache for when we introduce users
-	supportedChannelModesString = modes.SupportedChannelModes.String()
+	// three final parameters of 004 RPL_MYINFO, enumerating our supported modes
+	rplMyInfo1, rplMyInfo2, rplMyInfo3 = modes.RplMyInfo()
 
 	// whitelist of caps to serve on the STS-only listener. In particular,
 	// never advertise SASL, to discourage people from sending their passwords:
-	stsOnlyCaps = caps.NewSet(caps.STS, caps.MessageTags, caps.ServerTime, caps.LabeledResponse, caps.Nope)
+	stsOnlyCaps = caps.NewSet(caps.STS, caps.MessageTags, caps.ServerTime, caps.Batch, caps.LabeledResponse, caps.EchoMessage, caps.Nope)
 
 	// we only have standard channels for now. TODO: any updates to this
 	// will also need to be reflected in CasefoldChannel
@@ -120,6 +118,9 @@ func (server *Server) Shutdown() {
 	//TODO(dan): Make sure we disallow new nicks
 	for _, client := range server.clients.AllClients() {
 		client.Notice("Server is shutting down")
+		if client.AlwaysOn() {
+			client.Store(IncludeLastSeen)
+		}
 	}
 
 	if err := server.store.Close(); err != nil {
@@ -208,12 +209,14 @@ func (server *Server) tryRegister(c *Client, session *Session) (exiting bool) {
 	}
 
 	// try to complete registration normally
-	if c.preregNick == "" || !c.HasUsername() || session.capState == caps.NegotiatingState {
+	// XXX(#1057) username can be filled in by an ident query without the client
+	// having sent USER: check for both username and realname to ensure they did
+	if c.preregNick == "" || c.username == "" || c.realname == "" || session.capState == caps.NegotiatingState {
 		return
 	}
 
 	if c.isSTSOnly {
-		server.playRegistrationBurst(session)
+		server.playSTSBurst(session)
 		return true
 	}
 
@@ -266,15 +269,35 @@ func (server *Server) tryRegister(c *Client, session *Session) (exiting bool) {
 		return true
 	}
 
+	// Apply default user modes (without updating the invisible counter)
+	// The number of invisible users will be updated by server.stats.Register
+	// if we're using default user mode +i.
+	for _, defaultMode := range server.Config().Accounts.defaultUserModes {
+		c.SetMode(defaultMode, true)
+	}
+
 	// registration has succeeded:
 	c.SetRegistered()
 
 	// count new user in statistics
-	server.stats.Register()
-	server.monitorManager.AlertAbout(c, true)
+	server.stats.Register(c.HasMode(modes.Invisible))
+	server.monitorManager.AlertAbout(c.Nick(), c.NickCasefolded(), true)
 
 	server.playRegistrationBurst(session)
 	return false
+}
+
+func (server *Server) playSTSBurst(session *Session) {
+	nick := utils.SafeErrorParam(session.client.preregNick)
+	session.Send(nil, server.name, RPL_WELCOME, nick, fmt.Sprintf("Welcome to the Internet Relay Network %s", nick))
+	session.Send(nil, server.name, RPL_YOURHOST, nick, fmt.Sprintf("Your host is %[1]s, running version %[2]s", server.name, "oragono"))
+	session.Send(nil, server.name, RPL_CREATED, nick, fmt.Sprintf("This server was created %s", time.Time{}.Format(time.RFC1123)))
+	session.Send(nil, server.name, RPL_MYINFO, nick, server.name, "oragono", "o", "o", "o")
+	session.Send(nil, server.name, RPL_ISUPPORT, nick, "CASEMAPPING=ascii", "are supported by this server")
+	session.Send(nil, server.name, ERR_NOMOTD, nick, "MOTD is unavailable")
+	for _, line := range server.Config().Server.STS.bannerLines {
+		session.Send(nil, server.name, "NOTICE", nick, line)
+	}
 }
 
 func (server *Server) playRegistrationBurst(session *Session) {
@@ -290,15 +313,7 @@ func (server *Server) playRegistrationBurst(session *Session) {
 	session.Send(nil, server.name, RPL_WELCOME, d.nick, fmt.Sprintf(c.t("Welcome to the Internet Relay Network %s"), d.nick))
 	session.Send(nil, server.name, RPL_YOURHOST, d.nick, fmt.Sprintf(c.t("Your host is %[1]s, running version %[2]s"), server.name, Ver))
 	session.Send(nil, server.name, RPL_CREATED, d.nick, fmt.Sprintf(c.t("This server was created %s"), server.ctime.Format(time.RFC1123)))
-	//TODO(dan): Look at adding last optional [<channel modes with a parameter>] parameter
-	session.Send(nil, server.name, RPL_MYINFO, d.nick, server.name, Ver, supportedUserModesString, supportedChannelModesString)
-
-	if c.isSTSOnly {
-		for _, line := range server.Config().Server.STS.bannerLines {
-			c.Notice(line)
-		}
-		return
-	}
+	session.Send(nil, server.name, RPL_MYINFO, d.nick, server.name, Ver, rplMyInfo1, rplMyInfo2, rplMyInfo3)
 
 	rb := NewResponseBuffer(session)
 	server.RplISupport(c, rb)
@@ -316,9 +331,6 @@ func (server *Server) playRegistrationBurst(session *Session) {
 	if server.logger.IsLoggingRawIO() {
 		session.Send(nil, c.server.name, "NOTICE", d.nick, c.t("This server is in debug mode and is logging all user I/O. If you do not wish for everything you send to be readable by the server owner(s), please disconnect."))
 	}
-
-	// #572: defer nick warnings to the end of the registration burst
-	session.client.nickTimer.Touch(nil)
 }
 
 // RplISupport outputs our ISUPPORT lines to the client. This is used on connection and in VERSION responses.
@@ -489,6 +501,11 @@ func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *Response
 			if channel != nil {
 				flags += channel.ClientPrefixes(target, false)
 			}
+
+			if target.HasMode(modes.Bot) {
+				flags += "B"
+			}
+
 			params = append(params, flags)
 		case 'd': // server hops from us to user (0 of course)
 			params = append(params, "0")
@@ -516,7 +533,6 @@ func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *Response
 		// if this isn't WHOX, stick hops + realname at the end
 		params = append(params, "0 "+details.realname)
 	}
-
 	rb.Add(nil, client.server.name, numeric, params...)
 }
 
@@ -555,6 +571,7 @@ func (server *Server) applyConfig(config *Config) (err error) {
 		server.name = config.Server.Name
 		server.nameCasefolded = config.Server.nameCasefolded
 		globalCasemappingSetting = config.Server.Casemapping
+		globalUtf8EnforcementSetting = config.Server.EnforceUtf8
 	} else {
 		// enforce configs that can't be changed after launch:
 		if server.name != config.Server.Name {
@@ -563,6 +580,8 @@ func (server *Server) applyConfig(config *Config) (err error) {
 			return fmt.Errorf("Datastore path cannot be changed after launching the server, rehash aborted")
 		} else if globalCasemappingSetting != config.Server.Casemapping {
 			return fmt.Errorf("Casemapping cannot be changed after launching the server, rehash aborted")
+		} else if globalUtf8EnforcementSetting != config.Server.EnforceUtf8 {
+			return fmt.Errorf("UTF-8 enforcement cannot be changed after launching the server, rehash aborted")
 		} else if oldConfig.Accounts.Multiclient.AlwaysOn != config.Accounts.Multiclient.AlwaysOn {
 			return fmt.Errorf("Default always-on setting cannot be changed after launching the server, rehash aborted")
 		}
@@ -697,13 +716,6 @@ func (server *Server) applyConfig(config *Config) (err error) {
 			if sendRawOutputNotice {
 				sClient.Notice(sClient.t("This server is in debug mode and is logging all user I/O. If you do not wish for everything you send to be readable by the server owner(s), please disconnect."))
 			}
-
-			if !oldConfig.Accounts.NickReservation.Enabled && config.Accounts.NickReservation.Enabled {
-				sClient.nickTimer.Initialize(sClient)
-				sClient.nickTimer.Touch(nil)
-			} else if oldConfig.Accounts.NickReservation.Enabled && !config.Accounts.NickReservation.Enabled {
-				sClient.nickTimer.Stop()
-			}
 		}
 	}
 
@@ -734,35 +746,6 @@ func (server *Server) setupPprofListener(config *Config) {
 		server.pprofServer = &ps
 		server.logger.Info("server", "Started pprof listener", server.pprofServer.Addr)
 	}
-}
-
-func (config *Config) loadMOTD() (err error) {
-	if config.Server.MOTD != "" {
-		file, err := os.Open(config.Server.MOTD)
-		if err == nil {
-			defer file.Close()
-
-			reader := bufio.NewReader(file)
-			for {
-				line, err := reader.ReadString('\n')
-				if err != nil {
-					break
-				}
-				line = strings.TrimRight(line, "\r\n")
-
-				if config.Server.MOTDFormatting {
-					line = ircfmt.Unescape(line)
-				}
-
-				// "- " is the required prefix for MOTD, we just add it here to make
-				// bursting it out to clients easier
-				line = fmt.Sprintf("- %s", line)
-
-				config.Server.motdLines = append(config.Server.motdLines, line)
-			}
-		}
-	}
-	return
 }
 
 func (server *Server) loadDatastore(config *Config) error {
@@ -1037,26 +1020,6 @@ func (matcher *elistMatcher) Matches(channel *Channel) bool {
 	}
 
 	return true
-}
-
-// RplList returns the RPL_LIST numeric for the given channel.
-func (target *Client) RplList(channel *Channel, rb *ResponseBuffer) {
-	// get the correct number of channel members
-	var memberCount int
-	if target.HasMode(modes.Operator) || channel.hasClient(target) {
-		memberCount = len(channel.Members())
-	} else {
-		for _, member := range channel.Members() {
-			if !member.HasMode(modes.Invisible) {
-				memberCount++
-			}
-		}
-	}
-
-	// #704: some channels are kept around even with no members
-	if memberCount != 0 {
-		rb.Add(nil, target.server.name, RPL_LIST, target.nick, channel.name, strconv.Itoa(memberCount), channel.topic)
-	}
 }
 
 var (

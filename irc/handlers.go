@@ -2794,18 +2794,18 @@ func whoHandler(server *Server, client *Client, msg ircmsg.IrcMessage, rb *Respo
 	}
 
 	sFields := "cuhsnf"
-	whoType := ""
+	whoType := "0"
+	isWhox := false
 	if len(msg.Params) > 1 && strings.Contains(msg.Params[1], "%") {
+		isWhox = true
 		whoxData := msg.Params[1]
 		fieldStart := strings.Index(whoxData, "%")
 		sFields = whoxData[fieldStart+1:]
 
-		if strings.Contains(sFields, ",") {
-			typeIndex := strings.Index(sFields, ",")
+		typeIndex := strings.Index(sFields, ",")
+		if typeIndex > -1 && typeIndex < (len(sFields)-1) { // make sure there's , and a value after it
 			whoType = sFields[typeIndex+1:]
 			sFields = strings.ToLower(sFields[:typeIndex])
-		} else {
-			whoType = "0"
 		}
 	}
 	var fields WhoFields
@@ -2830,7 +2830,7 @@ func whoHandler(server *Server, client *Client, msg ircmsg.IrcMessage, rb *Respo
 			if !channel.flags.HasMode(modes.Secret) || isJoined || isOper {
 				for _, member := range channel.Members() {
 					if !member.HasMode(modes.Invisible) || isJoined || isOper {
-						client.rplWhoReply(channel, member, rb, fields, whoType)
+						client.rplWhoReply(channel, member, rb, isWhox, fields, whoType)
 					}
 				}
 			}
@@ -2858,7 +2858,7 @@ func whoHandler(server *Server, client *Client, msg ircmsg.IrcMessage, rb *Respo
 
 		for mclient := range server.clients.FindAll(mask) {
 			if isOper || !mclient.HasMode(modes.Invisible) || isFriend(mclient) {
-				client.rplWhoReply(nil, mclient, rb, fields, whoType)
+				client.rplWhoReply(nil, mclient, rb, isWhox, fields, whoType)
 			}
 		}
 	}

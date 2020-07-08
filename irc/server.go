@@ -455,17 +455,13 @@ func (fields *WhoFields) Has(field rune) bool {
 // <channel> <user> <host> <server> <nick> <H|G>[*][~|&|@|%|+][B] :<hopcount> <real name>
 // whox format:
 // <type> <channel> <user> <ip> <host> <server> <nick> <H|G>[*][~|&|@|%|+][B] <hops> <idle> <account> <rank> :<real name>
-func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *ResponseBuffer, fields WhoFields, whoType string) {
+func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *ResponseBuffer, isWhox bool, fields WhoFields, whoType string) {
 	params := []string{client.Nick()}
 
 	details := target.Details()
 
 	if fields.Has('t') {
-		fType := whoType
-		if fType == "" {
-			fType = "0"
-		}
-		params = append(params, fType)
+		params = append(params, whoType)
 	}
 	if fields.Has('c') {
 		fChannel := "*"
@@ -539,10 +535,9 @@ func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *Response
 		params = append(params, details.realname)
 	}
 
-	numeric := RPL_WHOREPLY
-	if whoType != "" { // if we have a type, this is WHOX
-		numeric = RPL_WHOSPCRPL
-	} else {
+	numeric := RPL_WHOSPCRPL
+	if !isWhox {
+		numeric = RPL_WHOREPLY
 		// if this isn't WHOX, stick hops + realname at the end
 		params = append(params, "0 "+details.realname)
 	}

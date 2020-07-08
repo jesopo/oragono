@@ -2793,12 +2793,12 @@ func whoHandler(server *Server, client *Client, msg ircmsg.IrcMessage, rb *Respo
 		return false
 	}
 
-	fields := []byte("cuhsnf")
+	sFields := "cuhsnf"
 	whoType := ""
 	if len(msg.Params) > 1 && strings.Contains(msg.Params[1], "%") {
 		whoxData := msg.Params[1]
 		fieldStart := strings.Index(whoxData, "%")
-		sFields := whoxData[fieldStart:]
+		sFields = whoxData[fieldStart:]
 
 		if strings.Contains(sFields, ",") {
 			typeIndex := strings.Index(sFields, ",")
@@ -2807,7 +2807,12 @@ func whoHandler(server *Server, client *Client, msg ircmsg.IrcMessage, rb *Respo
 		} else {
 			whoType = "0"
 		}
-		fields = []byte(sFields)
+	}
+	var fields WhoFields
+	for _, field := range sFields {
+		if val, ok := whoFieldMap[field]; ok {
+			fields |= val
+		}
 	}
 
 	//TODO(dan): is this used and would I put this param in the Modern doc?

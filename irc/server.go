@@ -48,8 +48,6 @@ var (
 	chanTypes = "#"
 
 	throttleMessage = "You have attempted to connect too many times within a short duration. Wait a while, and you will be able to connect."
-
-	whoxFields = []byte("tcuihsnfdlaor")
 )
 
 // Server is the main Oragono server.
@@ -434,98 +432,132 @@ func (client *Client) getWhoisOf(target *Client, rb *ResponseBuffer) {
 	}
 }
 
+type WhoFields uint
+
+const (
+	FieldType WhoFields = iota << 0
+	FieldChannel
+	FieldUsername
+	FieldIP
+	FieldHostname
+	FieldServer
+	FieldNickname
+	FieldFlags
+	FieldHops
+	FieldIdle
+	FieldAccount
+	FieldRank
+	FieldRealname
+)
+
+//tcuihsnfdlaor
+var whoFieldMap = map[rune]WhoFields{
+	't': FieldType,
+	'c': FieldChannel,
+	'u': FieldUsername,
+	'i': FieldIP,
+	'h': FieldHostname,
+	's': FieldServer,
+	'n': FieldNickname,
+	'f': FieldFlags,
+	'd': FieldHops,
+	'l': FieldIdle,
+	'a': FieldAccount,
+	'o': FieldRank,
+	'r': FieldRealname,
+}
+
 // rplWhoReply returns the WHO(X) reply between one user and another channel/user.
 // who format:
 // <channel> <user> <host> <server> <nick> <H|G>[*][~|&|@|%|+][B] :<hopcount> <real name>
 // whox format:
 // <type> <channel> <user> <ip> <host> <server> <nick> <H|G>[*][~|&|@|%|+][B] <hops> <idle> <account> <rank> :<real name>
-func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *ResponseBuffer, fields []byte, whoType string) {
+func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *ResponseBuffer, fields WhoFields, whoType string) {
 	params := []string{client.Nick()}
 
 	details := target.Details()
 
-	for _, field := range whoxFields {
-		found := false
-		for _, queryField := range fields {
-			if field == queryField {
-				found = true
-				break
-			}
+	if (fields & FieldType) != 0 {
+		fType := whoType
+		if fType == "" {
+			fType = "0"
 		}
-		if !found {
-			continue
+		params = append(params, fType)
+	}
+	if (fields & FieldChannel) != 0 {
+		fChannel := "*"
+		if channel != nil {
+			fChannel = channel.name
+		}
+		params = append(params, fChannel)
+	}
+	if (fields & FieldUsername) != 0 {
+		params = append(params, details.username)
+	}
+	if (fields & FieldIP) != 0 {
+		fIP := "255.255.255.255"
+		if client.HasMode(modes.Operator) || client == target {
+			// you can only see a target's IP if they're you or you're an oper
+			fIP = target.IP().String()
+		}
+		if strings.HasPrefix(fIP, ":") {
+			// e.g. ::1 would break protocol tokenisation
+			fIP = "0" + fIP
+		}
+		params = append(params, fIP)
+	}
+	if (fields & FieldHostname) != 0 {
+		params = append(params, details.hostname)
+	}
+	if (fields & FieldServer) != 0 {
+		params = append(params, target.server.name)
+	}
+	if (fields & FieldNickname) != 0 {
+		params = append(params, details.nick)
+	}
+	if (fields & FieldFlags) != 0 { // "flags" (away + oper state + channel status prefix)
+		flags := ""
+		if target.Away() {
+			flags += "G" // Gone
+		} else {
+			flags += "H" // Here
 		}
 
-		switch field {
-		case 't': // type
-			fType := whoType
-			if fType == "" {
-				fType = "0"
-			}
-			params = append(params, fType)
-		case 'c': // channel name
-			fChannel := "*"
-			if channel != nil {
-				fChannel = channel.name
-			}
-			params = append(params, fChannel)
-		case 'u': // ident/gecos
-			params = append(params, details.username)
-		case 'i': // user's ip
-			fIP := "255.255.255.255"
-			if client.HasMode(modes.Operator) || client == target {
-				// you can only see a user's ip if they're you or you're an oper
-				fIP = target.IP().String()
-			}
-			if strings.HasPrefix(fIP, ":") {
-				// e.g. ::1 would break protocol tokenisation
-				fIP = "0" + fIP
-			}
-			params = append(params, fIP)
-		case 'h': // 'h" - user's hostname
-			params = append(params, details.hostname)
-		case 's': // user's server name
-			params = append(params, target.server.name)
-		case 'n': // user's nickname
-			params = append(params, details.nick)
-		case 'f': // "flags" aka away + oper state + channel status prefix
-			flags := ""
-			if target.Away() {
-				flags += "G" // Gone
-			} else {
-				flags += "H" // Here
-			}
-
-			if target.HasMode(modes.Operator) {
-				flags += "*"
-			}
-
-			if channel != nil {
-				flags += channel.ClientPrefixes(target, false)
-			}
-
-			if target.HasMode(modes.Bot) {
-				flags += "B"
-			}
-
-			params = append(params, flags)
-		case 'd': // server hops from us to user (0 of course)
-			params = append(params, "0")
-		case 'l': // user's idle time
-			params = append(params, fmt.Sprintf("%d", target.IdleSeconds()))
-		case 'a': // user's account name
-			fAccount := "0"
-			if target.accountName != "*" {
-				// WHOX uses "0" to mean "no account"
-				fAccount = target.accountName
-			}
-			params = append(params, fAccount)
-		case 'o': // user's channel power level
-			// TODO: implement this
-			params = append(params, "0")
-		case 'r': // user's real name
-			params = append(params, details.realname)
+		if target.HasMode(modes.Operator) {
+			flags += "*"
 		}
+
+		if channel != nil {
+			flags += channel.ClientPrefixes(target, false)
+		}
+
+		if target.HasMode(modes.Bot) {
+			flags += "B"
+		}
+
+		params = append(params, flags)
+
+	}
+	if (fields & FieldHops) != 0 { // server hops from us to target
+		params = append(params, "0")
+	}
+	if (fields & FieldIdle) != 0 {
+		params = append(params, fmt.Sprintf("%d", target.IdleSeconds()))
+	}
+	if (fields & FieldAccount) != 0 {
+		fAccount := "0"
+		if target.accountName != "*" {
+			// WHOX uses "0" to mean "no account"
+			fAccount = target.accountName
+		}
+		params = append(params, fAccount)
+	}
+	if (fields & FieldRank) != 0 { // target's channel power level
+		// TODO: implement this
+		params = append(params, "0")
+	}
+	if (fields & FieldRealname) != 0 {
+		params = append(params, details.realname)
 	}
 
 	numeric := RPL_WHOREPLY
@@ -535,6 +567,7 @@ func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *Response
 		// if this isn't WHOX, stick hops + realname at the end
 		params = append(params, "0 "+details.realname)
 	}
+
 	rb.Add(nil, client.server.name, numeric, params...)
 }
 

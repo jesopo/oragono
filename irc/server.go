@@ -50,6 +50,8 @@ var (
 	chanTypes = "#"
 
 	throttleMessage = "You have attempted to connect too many times within a short duration. Wait a while, and you will be able to connect."
+
+	whoxFields = []byte("tcuihsnfdlaor")
 )
 
 // Server is the main Oragono server.
@@ -423,27 +425,99 @@ func (client *Client) getWhoisOf(target *Client, rb *ResponseBuffer) {
 // rplWhoReply returns the WHO reply between one user and another channel/user.
 // <channel> <user> <host> <server> <nick> ( "H" / "G" ) ["*"] [ ( "@" / "+" ) ]
 // :<hopcount> <real name>
-func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *ResponseBuffer) {
-	channelName := "*"
-	flags := ""
+func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *ResponseBuffer, fields []byte, whoType string) {
+	params := []string{client.Nick()}
 
-	if target.Away() {
-		flags = "G"
-	} else {
-		flags = "H"
-	}
-	if target.HasMode(modes.Operator) {
-		flags += "*"
-	}
-
-	if channel != nil {
-		// TODO is this right?
-		flags += channel.ClientPrefixes(target, rb.session.capabilities.Has(caps.MultiPrefix))
-		channelName = channel.name
-	}
 	details := target.Details()
-	// hardcode a hopcount of 0 for now
-	rb.Add(nil, client.server.name, RPL_WHOREPLY, client.Nick(), channelName, details.username, details.hostname, client.server.name, details.nick, flags, "0 "+details.realname)
+
+	for _, field := range whoxFields {
+		found := false
+		for _, queryField := range fields {
+			if field == queryField {
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+
+		switch field {
+		case 't': // type
+			fType := whoType
+			if fType == "" {
+				fType = "0"
+			}
+			params = append(params, fType)
+		case 'c': // channel name
+			fChannel := "*"
+			if channel != nil {
+				fChannel = channel.name
+			}
+			params = append(params, fChannel)
+		case 'u': // ident/gecos
+			params = append(params, details.username)
+		case 'i': // user's ip
+			fIP := "255.255.255.255"
+			if client.HasMode(modes.Operator) || client == target {
+				// you can only see a user's ip if they're you or you're an oper
+				fIP = target.IP().String()
+			}
+			if strings.HasPrefix(fIP, ":") {
+				// e.g. ::1 would break protocol tokenisation
+				fIP = "0" + fIP
+			}
+			params = append(params, fIP)
+		case 'h': // 'h" - user's hostname
+			params = append(params, details.hostname)
+		case 's': // user's server name
+			params = append(params, target.server.name)
+		case 'n': // user's nickname
+			params = append(params, details.nick)
+		case 'f': // "flags" aka away + oper state + channel status prefix
+			flags := ""
+			if target.Away() {
+				flags += "G" // Gone
+			} else {
+				flags += "H" // Here
+			}
+
+			if target.HasMode(modes.Operator) {
+				flags += "*"
+			}
+
+			if channel != nil {
+				flags += channel.ClientPrefixes(target, false)
+			}
+			params = append(params, flags)
+		case 'd': // server hops from us to user (0 of course)
+			params = append(params, "0")
+		case 'l': // user's idle time
+			params = append(params, fmt.Sprintf("%d", target.IdleSeconds()))
+		case 'a': // user's account name
+			fAccount := "0"
+			if target.accountName != "*" {
+				// WHOX uses "0" to mean "no account"
+				fAccount = target.accountName
+			}
+			params = append(params, fAccount)
+		case 'o': // user's channel power level
+			// TODO: implement this
+			params = append(params, "0")
+		case 'r': // user's real name
+			params = append(params, details.realname)
+		}
+	}
+
+	numeric := RPL_WHOREPLY
+	if whoType != "" { // if we have a type, this is WHOX
+		numeric = RPL_WHOSPCRPL
+	} else {
+		// if this isn't WHOX, stick hops + realname at the end
+		params = append(params, "0 "+details.realname)
+	}
+
+	rb.Add(nil, client.server.name, numeric, params...)
 }
 
 // rehash reloads the config and applies the changes from the config file.

@@ -2644,6 +2644,23 @@ func whoHandler(server *Server, client *Client, msg ircmsg.IrcMessage, rb *Respo
 		return false
 	}
 
+	fields := []byte("cuhsnf")
+	whoType := ""
+	if len(msg.Params) > 1 && strings.Contains(msg.Params[1], "%") {
+		whoxData := msg.Params[1]
+		fieldStart := strings.Index(whoxData, "%")
+		sFields := whoxData[fieldStart:]
+
+		if strings.Contains(sFields, ",") {
+			typeIndex := strings.Index(sFields, ",")
+			whoType = sFields[typeIndex+1:]
+			sFields = sFields[:typeIndex]
+		} else {
+			whoType = "0"
+		}
+		fields = []byte(sFields)
+	}
+
 	//TODO(dan): is this used and would I put this param in the Modern doc?
 	// if not, can we remove it?
 	//var operatorOnly bool
@@ -2661,7 +2678,7 @@ func whoHandler(server *Server, client *Client, msg ircmsg.IrcMessage, rb *Respo
 			if !channel.flags.HasMode(modes.Secret) || isJoined || isOper {
 				for _, member := range channel.Members() {
 					if !member.HasMode(modes.Invisible) || isJoined || isOper {
-						client.rplWhoReply(channel, member, rb)
+						client.rplWhoReply(channel, member, rb, fields, whoType)
 					}
 				}
 			}
@@ -2689,7 +2706,7 @@ func whoHandler(server *Server, client *Client, msg ircmsg.IrcMessage, rb *Respo
 
 		for mclient := range server.clients.FindAll(mask) {
 			if isOper || !mclient.HasMode(modes.Invisible) || isFriend(mclient) {
-				client.rplWhoReply(nil, mclient, rb)
+				client.rplWhoReply(nil, mclient, rb, fields, whoType)
 			}
 		}
 	}

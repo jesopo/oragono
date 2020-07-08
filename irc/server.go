@@ -481,11 +481,7 @@ func (client *Client) rplWhoReply(channel *Channel, target *Client, rb *Response
 		fIP := "255.255.255.255"
 		if client.HasMode(modes.Operator) || client == target {
 			// you can only see a target's IP if they're you or you're an oper
-			fIP = target.IP().String()
-		}
-		if strings.HasPrefix(fIP, ":") {
-			// e.g. ::1 would break protocol tokenisation
-			fIP = "0" + fIP
+			fIP = target.IPString()
 		}
 		params = append(params, fIP)
 	}

@@ -2798,7 +2798,7 @@ func whoHandler(server *Server, client *Client, msg ircmsg.IrcMessage, rb *Respo
 	if len(msg.Params) > 1 && strings.Contains(msg.Params[1], "%") {
 		whoxData := msg.Params[1]
 		fieldStart := strings.Index(whoxData, "%")
-		sFields = whoxData[fieldStart:]
+		sFields = whoxData[fieldStart+1:]
 
 		if strings.Contains(sFields, ",") {
 			typeIndex := strings.Index(sFields, ",")
